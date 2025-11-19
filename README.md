@@ -6,6 +6,7 @@
   <img src="./pic/2.jpg" width="200" />
   <img src="./pic/1.jpg" width="200" /> 
 </p>
+
 #### 项目特点
 纯前端脚本，无需后端
 数据存储在浏览器 localStorage
