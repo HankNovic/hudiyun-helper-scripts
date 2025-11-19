@@ -1,10 +1,16 @@
 ## 狐蒂云自动化脚本
 
 用于狐蒂云（szhdy.com）的自动化工具集，包含自动抢购和商品识别两个脚本。
+
 <p float="left">
   <img src="./pic/2.jpg" width="200" />
   <img src="./pic/1.jpg" width="200" /> 
 </p>
+#### 项目特点
+纯前端脚本，无需后端
+数据存储在浏览器 localStorage
+通过 DOM 操作实现自动化
+支持页面跳转、弹窗关闭、错误重试等
 
 ## 安装说明
 
@@ -46,6 +52,7 @@
 https://www.szhdy.com/cart?action=configureproduct&pid=1859
 
 其他商品PID：
+
 <details>
 <summary>点击展开</summary>
 1850 12+2香港25区 2H系列 ¥9999999.00<br>
@@ -150,8 +157,8 @@ https://www.szhdy.com/cart?action=configureproduct&pid=1859
 1949 新加坡1区|精品网络| 32H系列 ¥350.00<br>
 1950 三周年 北京BGP3区-16H16G ¥333.00<br>
 </details>
-11.17三周年最后一波更新
-
+11.17 三周年最后一波更新
+预计下一年有四周年活动
 
 ### 自动抢购.js（后运行）
 
