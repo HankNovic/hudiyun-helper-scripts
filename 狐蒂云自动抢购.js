@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         狐蒂云自动抢购
 // @namespace    http://tampermonkey.net/
-// @version      1.1.3
+// @version      1.2.2
 // @description  进入支付页或购物车提交后暂停，支持缩放到侧栏，含抢购时间提示，新增重复提交选项，自动关闭弹窗
 // @match        https://www.szhdy.com/*
 // @grant        none
@@ -31,7 +31,9 @@
     autoClosePopup: true,
     // HTTP错误自动重试（仅 404/502），按检查间隔等待后刷新，最多5次；失败自动暂停
     enableHttpRetry: false,
-    httpRetryMax: 5
+    httpRetryMax: 5,
+    // 在商品配置页(action=configureproduct)校验URL中的pid是否在商品ID数组中
+    enforcePidWhitelistOnConfigPage: false
   };
 
   /** ==========================
@@ -107,6 +109,23 @@
 
   const isCartPage = () => {
     return location.href.includes("action=viewcart");
+  };
+
+  // 商品配置页PID白名单检测（可选）
+  const shouldStopByPidWhitelistOnConfigPage = () => {
+    try {
+      if (!config.enforcePidWhitelistOnConfigPage) return false;
+      if (!location.href.includes("action=configureproduct")) return false;
+
+      const params = new URLSearchParams(location.search);
+      const currentPid = (params.get('pid') || '').trim();
+      if (!currentPid) return true; // 无pid视为不通过
+
+      const allowed = (config.productIds || []).map(x => String(x).trim()).filter(Boolean);
+      return !allowed.includes(currentPid);
+    } catch {
+      return false;
+    }
   };
 
   const sleep = (ms = null) => {
@@ -515,6 +534,12 @@
               HTTP错误自动重试（仅404/502，最多5次）
             </label>
           </div>
+          <div class="config-group">
+            <label class="config-checkbox-label">
+              <input type="checkbox" id="cfg-enforce-pid-whitelist" ${config.enforcePidWhitelistOnConfigPage ? 'checked' : ''}>
+              商品页校验PID（不在商品ID数组则停止）
+            </label>
+          </div>
         </div>
 
         <div class="hud-actions">
@@ -582,12 +607,13 @@
     document.querySelector("#hud-save").addEventListener("click", () => {
       config.startTime = fromDateTimeLocalFormat(document.querySelector("#cfg-start").value);
       config.endTime = fromDateTimeLocalFormat(document.querySelector("#cfg-end").value);
-      config.productIds = document.querySelector("#cfg-pid").value.split(",").map(x => x.trim());
+      config.productIds = document.querySelector("#cfg-pid").value.split(/[，,]/).map(x => x.trim()).filter(Boolean);
       config.checkInterval = parseInt(document.querySelector("#cfg-interval").value) || 800;
       config.refreshAfterFails = parseInt(document.querySelector("#cfg-refresh").value) || 5;
       config.repeatSubmitAfterCart = document.querySelector("#cfg-repeat-submit").checked;
       config.autoClosePopup = document.querySelector("#cfg-auto-close-popup").checked;
       config.enableHttpRetry = document.querySelector("#cfg-http-retry").checked;
+      config.enforcePidWhitelistOnConfigPage = document.querySelector("#cfg-enforce-pid-whitelist").checked;
       const sel = document.querySelector('#cfg-detect-mode');
       const checked = sel?.querySelector('input[name="detectMode"]:checked')?.value;
       if (checked === 'all_day' || checked === 'three_periods') config.detectMode = checked;
@@ -613,6 +639,7 @@
       config.repeatSubmitAfterCart = document.querySelector("#cfg-repeat-submit").checked;
       config.autoClosePopup = document.querySelector("#cfg-auto-close-popup").checked;
       config.enableHttpRetry = document.querySelector("#cfg-http-retry").checked;
+      config.enforcePidWhitelistOnConfigPage = document.querySelector("#cfg-enforce-pid-whitelist").checked;
       saveConfig(config);
       
       // 显示短暂保存提示
@@ -657,7 +684,7 @@
     });
 
     // 为复选框添加自动保存
-    document.querySelectorAll('#cfg-repeat-submit, #cfg-auto-close-popup, #cfg-http-retry').forEach(el => {
+    document.querySelectorAll('#cfg-repeat-submit, #cfg-auto-close-popup, #cfg-http-retry, #cfg-enforce-pid-whitelist').forEach(el => {
       el.addEventListener('change', autoSaveConfig);
     });
 
@@ -890,6 +917,20 @@
         updatePanel("", "已暂停操作");
         document.querySelector("#hud-toggle").textContent = "开始";
         document.querySelector("#hud-toggle").className = "hud-btn toggle status-paused";
+        return;
+      }
+
+      if (shouldStopByPidWhitelistOnConfigPage()) {
+        isRunning = false;
+        saveRunning(false);
+        const toggle = document.querySelector("#hud-toggle");
+        if (toggle) {
+          toggle.textContent = "开始";
+          toggle.className = "hud-btn toggle status-paused";
+        }
+        const params = new URLSearchParams(location.search);
+        const currentPid = (params.get('pid') || '').trim();
+        updatePanel("已暂停", `商品页PID不在白名单：${currentPid || '空'}`);
         return;
       }
 
