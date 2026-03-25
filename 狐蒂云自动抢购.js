@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         狐蒂云自动抢购
 // @namespace    http://tampermonkey.net/
-// @version      1.2.2
+// @version      1.2.3
 // @description  进入支付页或购物车提交后暂停，支持缩放到侧栏，含抢购时间提示，新增重复提交选项，自动关闭弹窗
 // @match        https://www.szhdy.com/*
 // @grant        none
@@ -33,7 +33,11 @@
     enableHttpRetry: false,
     httpRetryMax: 5,
     // 在商品配置页(action=configureproduct)校验URL中的pid是否在商品ID数组中
-    enforcePidWhitelistOnConfigPage: false
+    enforcePidWhitelistOnConfigPage: false,
+    // 配置页加入购物车前随机等待（ms）
+    enableConfigPageRandomDelay: false,
+    configPageDelayMinMs: 500,
+    configPageDelayMaxMs: 1500
   };
 
   /** ==========================
@@ -126,6 +130,32 @@
     } catch {
       return false;
     }
+  };
+
+  const normalizeConfigPageDelayRange = (minInput, maxInput) => {
+    const LIMIT_MAX = 3600000;
+    let min = Number.parseInt(minInput, 10);
+    let max = Number.parseInt(maxInput, 10);
+
+    if (!Number.isFinite(min)) min = 500;
+    if (!Number.isFinite(max)) max = 1500;
+
+    min = Math.min(LIMIT_MAX, Math.max(0, min));
+    max = Math.min(LIMIT_MAX, Math.max(0, max));
+
+    if (min > max) {
+      const t = min;
+      min = max;
+      max = t;
+    }
+    return { min, max };
+  };
+
+  const getConfigPageDelayMs = () => {
+    if (!config.enableConfigPageRandomDelay) return 0;
+    const { min, max } = normalizeConfigPageDelayRange(config.configPageDelayMinMs, config.configPageDelayMaxMs);
+    if (min === max) return min;
+    return Math.floor(Math.random() * (max - min + 1)) + min;
   };
 
   const sleep = (ms = null) => {
@@ -540,6 +570,22 @@
               商品页校验PID（不在商品ID数组则停止）
             </label>
           </div>
+          <div class="config-group">
+            <label class="config-checkbox-label">
+              <input type="checkbox" id="cfg-config-delay-enable" ${config.enableConfigPageRandomDelay ? 'checked' : ''}>
+              配置页随机时间等待功能
+            </label>
+          </div>
+          <div style="display: flex; gap: 8px;">
+            <div class="config-group" style="flex: 1;">
+              <label class="config-label">最小等待(ms)</label>
+              <input id="cfg-config-delay-min" type="number" min="0" max="3600000" value="${config.configPageDelayMinMs}" class="config-input" ${config.enableConfigPageRandomDelay ? '' : 'disabled'}>
+            </div>
+            <div class="config-group" style="flex: 1;">
+              <label class="config-label">最大等待(ms)</label>
+              <input id="cfg-config-delay-max" type="number" min="0" max="3600000" value="${config.configPageDelayMaxMs}" class="config-input" ${config.enableConfigPageRandomDelay ? '' : 'disabled'}>
+            </div>
+          </div>
         </div>
 
         <div class="hud-actions">
@@ -614,6 +660,15 @@
       config.autoClosePopup = document.querySelector("#cfg-auto-close-popup").checked;
       config.enableHttpRetry = document.querySelector("#cfg-http-retry").checked;
       config.enforcePidWhitelistOnConfigPage = document.querySelector("#cfg-enforce-pid-whitelist").checked;
+      config.enableConfigPageRandomDelay = document.querySelector("#cfg-config-delay-enable").checked;
+      const delayRangeOnSave = normalizeConfigPageDelayRange(
+        document.querySelector("#cfg-config-delay-min").value,
+        document.querySelector("#cfg-config-delay-max").value
+      );
+      config.configPageDelayMinMs = delayRangeOnSave.min;
+      config.configPageDelayMaxMs = delayRangeOnSave.max;
+      document.querySelector("#cfg-config-delay-min").value = String(delayRangeOnSave.min);
+      document.querySelector("#cfg-config-delay-max").value = String(delayRangeOnSave.max);
       const sel = document.querySelector('#cfg-detect-mode');
       const checked = sel?.querySelector('input[name="detectMode"]:checked')?.value;
       if (checked === 'all_day' || checked === 'three_periods') config.detectMode = checked;
@@ -633,13 +688,24 @@
       if (config.detectMode !== 'all_day') {
         config.endTime = fromDateTimeLocalFormat(document.querySelector("#cfg-end").value);
       }
-      config.productIds = document.querySelector("#cfg-pid").value.split(",").map(x => x.trim());
+      config.productIds = document.querySelector("#cfg-pid").value.split(/[，,]/).map(x => x.trim()).filter(Boolean);
       config.checkInterval = parseInt(document.querySelector("#cfg-interval").value) || 800;
       config.refreshAfterFails = parseInt(document.querySelector("#cfg-refresh").value) || 5;
       config.repeatSubmitAfterCart = document.querySelector("#cfg-repeat-submit").checked;
       config.autoClosePopup = document.querySelector("#cfg-auto-close-popup").checked;
       config.enableHttpRetry = document.querySelector("#cfg-http-retry").checked;
       config.enforcePidWhitelistOnConfigPage = document.querySelector("#cfg-enforce-pid-whitelist").checked;
+      config.enableConfigPageRandomDelay = document.querySelector("#cfg-config-delay-enable").checked;
+      const delayRange = normalizeConfigPageDelayRange(
+        document.querySelector("#cfg-config-delay-min").value,
+        document.querySelector("#cfg-config-delay-max").value
+      );
+      config.configPageDelayMinMs = delayRange.min;
+      config.configPageDelayMaxMs = delayRange.max;
+      const minEl = document.querySelector("#cfg-config-delay-min");
+      const maxEl = document.querySelector("#cfg-config-delay-max");
+      if (minEl) minEl.value = String(delayRange.min);
+      if (maxEl) maxEl.value = String(delayRange.max);
       saveConfig(config);
       
       // 显示短暂保存提示
@@ -678,15 +744,28 @@
       }
     });
 
+    const updateConfigDelayInputsState = () => {
+      const enabled = !!document.querySelector('#cfg-config-delay-enable')?.checked;
+      const minInput = document.querySelector('#cfg-config-delay-min');
+      const maxInput = document.querySelector('#cfg-config-delay-max');
+      if (minInput) minInput.disabled = !enabled;
+      if (maxInput) maxInput.disabled = !enabled;
+    };
+
     // 为所有输入框添加自动保存
-    document.querySelectorAll('#cfg-start, #cfg-end, #cfg-pid, #cfg-interval, #cfg-refresh').forEach(el => {
+    document.querySelectorAll('#cfg-start, #cfg-end, #cfg-pid, #cfg-interval, #cfg-refresh, #cfg-config-delay-min, #cfg-config-delay-max').forEach(el => {
       el.addEventListener('change', autoSaveConfig);
     });
 
     // 为复选框添加自动保存
-    document.querySelectorAll('#cfg-repeat-submit, #cfg-auto-close-popup, #cfg-http-retry, #cfg-enforce-pid-whitelist').forEach(el => {
-      el.addEventListener('change', autoSaveConfig);
+    document.querySelectorAll('#cfg-repeat-submit, #cfg-auto-close-popup, #cfg-http-retry, #cfg-enforce-pid-whitelist, #cfg-config-delay-enable').forEach(el => {
+      el.addEventListener('change', () => {
+        updateConfigDelayInputsState();
+        autoSaveConfig();
+      });
     });
+
+    updateConfigDelayInputsState();
 
     document.querySelector("#hud-refresh").addEventListener("click", () => {
       if (isProtectedPage()) return;
@@ -971,6 +1050,12 @@
         updatePanel("保护页", "尝试加入购物车");
         const btn = await waitFor(".btn-buyNow");
         if (btn) {
+          const delayMs = getConfigPageDelayMs();
+          if (delayMs > 0) {
+            const { min, max } = normalizeConfigPageDelayRange(config.configPageDelayMinMs, config.configPageDelayMaxMs);
+            updatePanel("保护页", min === max ? `固定等待 ${delayMs}ms` : `随机等待 ${delayMs}ms`);
+            await sleep(delayMs);
+          }
           btn.click();
           await sleep(1500);
         } else {
